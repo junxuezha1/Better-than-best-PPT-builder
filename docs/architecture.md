@@ -17,7 +17,7 @@
   -> 所有页面初稿
   -> 用户确认内置风格 / 上传参考稿（可选 1 次视觉分析）
   -> 所有页面设计稿
-  -> SVG + PNG fallback 的 PPTX
+  -> 可编辑 PPTX / 高保真 PPTX
 ```
 
 阶段采用 `research -> planning -> draft -> style_reference -> design` 依赖链。标题或要点变化从检索失效；排序变化保留搜索，但使 Deck Plan 与受影响页面下游失效；初稿指令只失效初稿和设计；风格变化回到设计参考确认，只失效设计。
@@ -40,14 +40,29 @@ SQLite 继续保存项目、页面、事件和本机模型配置，不做 schema
 - `structure-proposals.json`：Script Desk 生成、等待用户确认的结构提案。
 - `reference-state.json`：设计参考状态与风格画像。
 - `references/<uploadId>/`：原始 PPT/PPTX/PDF、隔离转换结果和抽样预览。
+- `themes/state.json`：整套主题与强度、封面/正文背景选择；`themes/bg_<uuid>.json/.jpg` 保存版本化背景资料与归一化图片。
 
 参考文件最大 50MB、最多 40 页，抽样不超过 12 页。PPT/PPTX 经隔离的 LibreOffice 用户目录转 PDF，PDF 由 Poppler 低分辨率渲染；视觉分析只提取版式、配色、图文关系和页型规律，不把参考内容当事实来源。
+
+## AI 背景生成与合成
+
+`background-prompts.ts` 提供完整艺术指导合同与输出校验。文本模型按项目主题、要求、受众和逐页内容输出原创视觉概念、材质、光影、空间、动态前景配色、封面/正文图片提示词及各自生成尺寸（未指定或无效时使用 `auto`）；`background-generation.ts` 将该方案与逐张生成结果写入 `themes/generation.json`，并保留 `ai_<uuid>.json` 视觉合同。没有固定主题选择作为默认入口，旧内置素材仅为历史项目保留兼容。
+
+`image-settings.ts` 以 0600 权限保存独立的 `data/image-settings.json`。`gotocc-images.ts` 只向 GotoCC 的 `/v1/models` 验证精确模型权限，再按 `/v1/images/generations` 一次请求一张背景；支持有上限的 base64 或公开 HTTPS 图片结果，不向图片下载域名发送 Key。图片 POST 不自动重试。每次成功先保存图片再请求下一张；失败、取消或重启后的不确定任务需用户明确重试，只补未完成部分。
+
+任务复用 `runtime-state.ts` 的全局项目运行状态、单 worker 与取消信号。HTTP 只登记生成请求，任务结束后停在设计确认，不自动覆盖稿件或继续设计。普通“继续项目”不重复未确认的收费请求。生成失败是背景面板内的局部错误，不让已有设计失效。
+
+`theme-assets.ts` 保存与校验图片及动态主题；`theme-model-context.ts` 将装饰背景与内容证据图片区分传入 SVG 模型。模型只画前景，`theme-composer.ts` 在质量校验前嵌入独立背景组，保留正文与品牌层。主题合同允许为文字安全区调整受影响分区，但不更改事实、主次与阅读顺序。
+
+`confirmDesignReference` 应用新视觉合同仅使设计失效。同一合同下，非运行项目可只替换背景与强度，保持前景与页面状态；SVG 内容指纹使导出缓存失效。预览使用当前项目内容，明确区分样张和已有设计的精确替换预览。历史项目和品牌锁定规则继续兼容。
 
 ## 模型与搜索边界
 
 `src/lib/model-gateway.ts` 对业务层暴露文本、JSON 和 SVG 三种调用，统一处理协议、Responses SSE、超时、错误净化、取消和短退避重试。`src/lib/search.ts` 负责联网搜索、来源结构校验、URL 正文补抓和 24 小时进程内缓存。
 
 搜索模型与文本、SVG 模型一样使用 Base URL、API Key、协议和模型名。Grok 联网搜索必须使用 Responses 协议，开启 `web_search` 工具并流式接收事件。
+
+GotoCC Responses 不支持 `max_tool_calls`，由协议适配层省略该可选参数，其它接口继续保留工具次数上限；联网工具、来源结构约束、超时与取消保持有效。
 
 ## 提示词分层与 SVG 质量门禁
 
@@ -57,15 +72,48 @@ SQLite 继续保存项目、页面、事件和本机模型配置，不做 schema
 - 设计层中，内容页必须包含原帖公开的 Bento Grid 与整页 SVG 核心；固定页不使用 Bento。设计只在事实、阅读顺序和主要分区不变的前提下应用内置风格或参考稿画像，不能退化成只换颜色。
 - `extractSvg` 从代码围栏或混杂输出中逐个寻找独立 SVG 根节点，避免模型在解释文字里提前提到 `<svg>` 时发生贪婪截取。候选必须是单根 XML、固定 1280×720 画布，并拒绝脚本、`foreignObject`、外部图片、占位文案和模板元数据。
 - 候选通过 Resvg 解析和低分辨率渲染探针后才能标记为 `ready`；没有可见文案、无法渲染或近似空白的结果视为失败。首次返回不合格时，模型网关只追加一次带错误原因的修复调用；第二次仍失败则停止该页。
-- 项目读取、worker 继续和导出前执行带指纹缓存的历史稿件审计。能提取真实根节点时直接规范化存储；无法修复时清空坏稿并将对应阶段降为 `stale`。导出缓存以每页更新时间组合为版本，避免页面已变化但复用旧 PPTX。
+- 项目读取、worker 继续和导出前执行带指纹缓存的历史稿件审计。能提取真实根节点时直接规范化存储；无法修复时清空坏稿并将对应阶段降为 `stale`。导出缓存使用实际内容指纹，修改 SVG、标题、备注或顺序都会失效，即使更新时间没有变化也不会复用旧文件。
+- 新 SVG 提示词追加稳定的 `id`、可选 `data-pptx-role`、显式 `<tspan>` 换行与嵌入图片建议。它们不改变原帖的生成流程，旧 SVG 无须这些属性即可转换。
+
+## PPTX 导出
+
+`export-service.ts` 负责项目审计、页面校验、模式解析、顺序、缓存和 HTTP 错误边界。`export-pptx.ts` 只校验输入并提交到 `export-worker-pool.ts`，`export-pptx-core.ts` 在子进程内调用 PptxGenJS 生成母版、主题、幻灯片、备注、媒体关系和 ZIP，不再手写整套 OOXML 包。适配层按 `svg-pptx-document.ts`（XML 安全和渲染）、`svg-pptx-style.ts`（样式和字体）、`svg-pptx-geometry.ts`（几何与变换）、`svg-pptx.ts`（对象转换与降级）拆分。
+
+模式默认 `editable`，输出原生 DrawingML 文本、几何和图片。`fidelity` 将规范化后的完整页渲染成 2560×1440 PNG 图片，供视觉优先的放映和交付使用。两种模式保持 1280×720 对应的 16:9 页面和 `speaker_notes`，不迁移数据库，也不调用模型、Office 或 Python。
+
+| SVG 内容 | 可编辑版输出与边界 |
+| --- | --- |
+| `text`、显式 `tspan` | 原生文本框，保留字号、字重、颜色和常用对齐；支持下划线、删除线及组合；不同文本段可能分成多个框，不自动重排成完整段落 |
+| `rect`、圆、椭圆、线、多边形、折线 | 原生自定义几何，支持填色、描边、透明度与常见变换 |
+| `path` | 转成 DrawingML 自定义路径，保留线段、贝塞尔曲线；圆弧由路径库规范化 |
+| base64 PNG / JPEG 图片 | 原生 `p:pic`，保留原始图像和常见矩形裁切，可在演示软件中选中、替换和再裁切；按图像签名纠正旧素材的 MIME 错标 |
+| base64 GIF / WebP / SVG 图片 | 在本机转 PNG 后作为独立图片；不承诺动画或图像内部可编辑 |
+| 普通继承样式、简单 class / id / 后代 / 直接子级规则 | 解析后应用到原生对象；不要求新语义属性 |
+| 渐变、滤镜、蒙版、图案、自定义标记、奇偶填充 | 对应元素或分组渲染为透明 PNG，保留位置及层叠顺序；文字若属于该复杂分组也会图片化 |
+| 分组透明度或裁切、嵌套 SVG、非矩形图片裁切 | 对应分组或图片局部栅格化 |
+| 同行混合 `tspan`、分段文字整体透明度、竖排、沿路径文本、自定义字距、文本描边或不支持的文本变换 | 对应文本局部栅格化 |
+| 复杂 CSS 规则 | 属性等非结构选择器按可能匹配的元素局部降级；兄弟关系、结构伪类及全局 at-rule 保留完整树，可能把整页图片化，并产生降级提示；不能视为所有文字均可编辑 |
+| SVG 图表与表格 | 基础图形、数值与标签按上述规则转换，不生成带工作簿数据的 Office 图表或 Office 表格 |
+| 损坏 XML、活动内容、外部 URL / 本机文件引用、超限输入 | 清晰报错；不会联网补图、读取外部文件、静默遗漏页面 |
+
+降级时保留元素祖先、内部定义和样式，在原视口中解析百分比长度，再在同一棵渲染树上按实际透明像素边界裁剪 PNG，因此阴影不只按几何边界裁切。单个不支持的元素不会导致整份导出失败；如果原 SVG 本身无法渲染，仍须修复后再导出。无效或不安全 SVG 在两种模式下都被拒绝。
+
+导出限制为最多 80 页、整套 SVG 共 40MB、单页 8MB、每页 20,000 个元素、嵌套深度 80；单图最大 6MB、3,200 万像素，嵌入 SVG 另有递归深度限制。标题与备注合计最多 1MiB，输出最多 128MiB。每个任务累计最多 40,000 节点、1.28 亿嵌入图片像素、4 亿渲染像素、160 次局部降级，先达到的限制生效。绘图坐标和字号超出 DrawingML 安全范围时局部降级；超出任务预算时清晰失败，不通过整页降级绕过。
+
+计算与历史 SVG 审计在可强制终止的子进程中执行；同一 Next 服务器进程共享 1 个执行槽、最多 4 个排队槽，执行 45 秒或排队 90 秒超时即终止。384MiB 限制仅针对 V8 heap，原生内存另由输入、像素、工作量预算约束。不能将多个 Next 实例的资源上限理解为整机共同上限。调用者取消时撤销其等待；共享转换仅在全部订阅者取消后终止。审计仅在原页面快照仍匹配时写回，超时、取消和资源错误不清空稿件。
+
+服务按 `sort_order` 排序，拒绝项目归属不符、无效顺序值和缺页。缓存指纹包含模式、项目标题、页面 ID / 顺序、SVG、页面标题和备注；采用最多 8 项 / 64MB 的进程内 LRU 缓存。相同指纹的并发请求合并，同项目不同请求串行，最多登记 16 项未完成导出；失败不缓存。HTTP 使用 `Cache-Control: no-store`，不会让浏览器继续保存过期响应。
+
+新增依赖固定为 PptxGenJS 4.0.1、xmldom 0.9.12、svgpath 2.6.0、image-size 1.2.1，均采用 MIT。没有复制候选转换器源码。Node 最低 22.18.0；Next 15.5.28、sharp 0.35.5 与 PostCSS 8.5.28 已固定到核验版本。image-size 两个上游无限循环公告仍存在，本项目在解析前按真实签名拦截并禁用相应格式；[CI 安全门禁](./export-ci.md)只豁免这两个精确版本公告，其它高危或严重问题阻断发布。既有 Resvg 使用 MPL-2.0，JSZip 选择其 MIT 授权；许可证范围和候选排除原因见[技术决策](./editable-pptx-decision.md)与[源码审计](./pptx-upstream-audit.md)。
 
 ## 前端边界
 
 - `HomeScreen`：项目入口，一次读取 `/api/bootstrap`。
 - `RequirementsFlow`：背景调研与内容需求确认。
 - `SpatialStructureBoard`：React Flow 空间故事板，展示结构、资料、Deck Plan、初稿和设计稿，并提供语义排序。
-- `DesignReferenceGate`：最终设计前的内置风格/颜色选择、PPT/PPTX/PDF 上传与风格画像确认。
+- `DesignReferenceGate` / `ThemeChooser`：最终设计前及完成后的主题、背景、内置风格与参考稿确认；提供当前内容样张与已生成设计的背景替换预览。
 - `ProjectExperience`：工作台组合与页面选择。
+- `ExportMenu` / `export-download.ts`：双模式菜单、单次下载、附件名与 MIME 校验、降级和错误提示；错误留在工作台内展示。
 - `useProjectController`：一次项目快照 + 单条 SSE 连接，集中管理写操作。
 - `ProjectIcon`：唯一功能图标入口，映射到 Lucide。
 
@@ -82,8 +130,11 @@ SQLite 继续保存项目、页面、事件和本机模型配置，不做 schema
 | `/api/projects/:id/events` | GET | 项目快照 SSE |
 | `/api/projects/:id/pages/:pageId` | PATCH | 更新页面标题、要点或备注 |
 | `/api/projects/:id/reference` | POST | 上传并排队分析 PPT/PPTX/PDF 视觉参考 |
-| `/api/projects/:id/export` | GET | 导出完整 PPTX |
+| `/api/projects/:id/theme` | GET / POST | 预览当前背景方案 / 上传背景 |
+| `/api/projects/:id/theme/generate` | POST | 登记背景规划、生成或明确重试 |
+| `/api/settings/images` | GET / POST / PUT | 读取脱敏图片配置 / 验证 Key 并拉取模型 / 验证并保存图片配置 |
+| `/api/projects/:id/export?mode=editable\|fidelity` | GET | 导出可编辑或高保真 PPTX |
 | `/api/settings` | GET / PUT | 本机模型配置 |
 | `/api/settings/models` | POST | 按配置拉取模型列表 |
 
-页面更新路由同时校验项目 ID 和页面 ID。导出要求每页设计稿都处于 `ready`，重复下载同一项目版本时复用有界内存缓存。
+页面更新路由同时校验项目 ID 和页面 ID。导出要求每页设计稿都处于 `ready`，缓存命中前仍会读取和审计当前项目。

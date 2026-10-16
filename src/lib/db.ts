@@ -46,6 +46,8 @@ function migrate(db: Database.Database) {
       status TEXT NOT NULL,
       page_count_target INTEGER NOT NULL DEFAULT 12,
       style_id TEXT NOT NULL DEFAULT 'brand-clean',
+      brand_template_id TEXT NOT NULL DEFAULT '',
+      brand_template_json TEXT NOT NULL DEFAULT '',
       assumptions_json TEXT NOT NULL DEFAULT '{}',
       outline_json TEXT NOT NULL DEFAULT '',
       init_sources_json TEXT NOT NULL DEFAULT '[]',
@@ -95,6 +97,22 @@ function migrate(db: Database.Database) {
   `);
 
   migrateSearchModelSettings(db);
+  migrateBrandTemplateSettings(db);
+}
+
+function migrateBrandTemplateSettings(db: Database.Database) {
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>).map(
+      (column) => column.name,
+    ),
+  );
+  const additions = [
+    ["brand_template_id", "TEXT NOT NULL DEFAULT ''"],
+    ["brand_template_json", "TEXT NOT NULL DEFAULT ''"],
+  ] as const;
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE projects ADD COLUMN ${name} ${definition}`);
+  }
 }
 
 function migrateSearchModelSettings(db: Database.Database) {

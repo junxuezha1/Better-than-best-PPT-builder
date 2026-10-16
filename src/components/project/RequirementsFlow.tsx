@@ -7,6 +7,7 @@ import type {
   ProjectDTO,
 } from "@/lib/client-types";
 import { ProjectIcon as Icon } from "./ProjectIcon";
+import { MaterialSummary } from "./MaterialSummary";
 
 export function RequirementsFlow({
   project,
@@ -28,6 +29,7 @@ export function RequirementsFlow({
   const [customIds, setCustomIds] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const preparedPageCount = project.contentMaterials?.preparedSlideCount;
   const snapshot = JSON.stringify(project.assumptions);
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export function RequirementsFlow({
 
   function updateMeta(patch: Partial<AssumptionsDTO>) {
     setDirty(true);
-    setDraft((current) => ({ ...current, ...patch }));
+    setDraft((current) => ({ ...current, ...patch, ...(preparedPageCount ? { pageCount: preparedPageCount } : {}) }));
   }
 
   function setQuestionValue(target: AssumptionQuestionDTO, value: string, custom = false) {
@@ -63,7 +65,8 @@ export function RequirementsFlow({
       };
       if (/页数|篇幅/.test(target.label)) {
         const numbers = value.match(/\d+/g)?.map(Number) ?? [];
-        if (numbers.length) next.pageCount = Math.min(16, Math.max(8, numbers.at(-1) ?? 12));
+        if (preparedPageCount) next.pageCount = preparedPageCount;
+        else if (numbers.length) next.pageCount = Math.min(16, Math.max(8, numbers.at(-1) ?? 12));
       }
       if (/受众|听众|对象/.test(target.label) && value) next.audience = value;
       if (/目的|目标/.test(target.label) && value) next.purpose = value;
@@ -74,7 +77,7 @@ export function RequirementsFlow({
   async function submit() {
     if (!allAnswered) return;
     setSubmitting(true);
-    const saved = await onSubmit(draft);
+    const saved = await onSubmit({ ...draft, ...(preparedPageCount ? { pageCount: preparedPageCount } : {}) });
     if (!saved) setSubmitting(false);
   }
 
@@ -96,6 +99,16 @@ export function RequirementsFlow({
       </header>
 
       <main className="mx-auto w-full max-w-[760px] px-4 py-8 md:px-6 md:py-12">
+        {project.contentMaterials && <div className="mb-5"><MaterialSummary materials={project.contentMaterials} /></div>}
+        {project.brandTemplate && (
+          <div className="requirements-brand-lock">
+            <img src={project.brandTemplate.logoUrl} alt="" />
+            <div><span>品牌模板已锁定</span><strong>{project.brandTemplate.name}</strong><small>{project.brandTemplate.organizationName}</small></div>
+            <i style={{ background: project.brandTemplate.primaryColor }} />
+            <i style={{ background: project.brandTemplate.secondaryColor }} />
+            <Icon name="check" size={16} />
+          </div>
+        )}
         <div className="ml-auto max-w-[78%] animate-rise">
           <div className="rounded-[24px_24px_7px_24px] bg-[#2f80ff] px-5 py-3.5 text-[15px] leading-6 text-white shadow-[0_12px_28px_rgba(47,128,255,0.22)] md:text-[16px]">
             {project.requestText}
@@ -135,19 +148,21 @@ export function RequirementsFlow({
                 <div className="px-5 py-5 md:px-6 md:py-6">
                   <details className="mb-5 rounded-[14px] border border-[#e8eef7] bg-[#f9fbfe]">
                     <summary className="cursor-pointer list-none px-4 py-3 text-[12px] font-medium text-[#6f8199]">
-                      基础设定 · {draft.pageCount} 页 · {draft.audience}
+                      基础设定 · {preparedPageCount || draft.pageCount} 页 · {draft.audience}
                     </summary>
                     <div className="grid gap-3 border-t border-[#e8eef7] p-4 md:grid-cols-[110px_1fr]">
                       <label className="text-[11px] text-[#7c8da4]">
                         总页数
                         <input
                           type="number"
-                          min={8}
-                          max={16}
-                          value={draft.pageCount}
+                          min={preparedPageCount || 8}
+                          max={preparedPageCount || 16}
+                          readOnly={Boolean(preparedPageCount)}
+                          value={preparedPageCount || draft.pageCount}
                           onChange={(event) => updateMeta({ pageCount: Number(event.target.value) })}
                           className="form-field mt-1"
                         />
+                        {preparedPageCount && <span className="mt-1 block leading-4 text-[#8a9bb0]">采用资料包的 {preparedPageCount} 页</span>}
                       </label>
                       <label className="text-[11px] text-[#7c8da4]">
                         核心受众

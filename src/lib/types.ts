@@ -18,6 +18,56 @@ export type ProjectStage =
 
 export type PageType = "cover" | "toc" | "section" | "content" | "end";
 
+export interface BrandLogoPlacement {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  plate: boolean;
+}
+
+export interface BrandLogoAsset {
+  id: string;
+  file: string;
+  mediaType: "image/svg+xml" | "image/png";
+  orientation: "wide" | "tall" | "square";
+  originalName: string;
+}
+
+export type BrandLogoSlotId =
+  | "top-left-wide"
+  | "top-right-wide"
+  | "bottom-center-wide"
+  | "top-left-square"
+  | "top-right-square"
+  | "bottom-left-square"
+  | "bottom-right-square"
+  | "left-rail-tall"
+  | "right-rail-tall";
+
+export interface BrandLogoPlan {
+  slot: BrandLogoSlotId;
+}
+
+export interface BrandTemplate {
+  id: string;
+  version: number;
+  name: string;
+  organizationName: string;
+  organizationType: "company" | "school" | "other";
+  baseStyleId: string;
+  primaryColor: string;
+  secondaryColor: string;
+  logoFile: string;
+  logoMediaType: "image/svg+xml" | "image/png";
+  logoAssets?: BrandLogoAsset[];
+  pageLogoAssets?: Partial<Record<PageType, string>>;
+  placements: Record<PageType, BrandLogoPlacement>;
+  profile: ReferenceStyleProfile;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ArtifactStatus =
   | "empty"
   | "running"
@@ -94,6 +144,7 @@ export interface DeckPagePlan {
   hierarchy: string[];
   readingOrder: string[];
   visualSlots: VisualSlotPlan[];
+  brandLogo?: BrandLogoPlan;
 }
 
 export interface DeckPlan {
@@ -128,7 +179,7 @@ export interface ReferenceStyleProfile {
 
 export interface DesignReferenceState {
   status: "pending" | "processing" | "ready" | "confirmed" | "failed";
-  mode: "preset" | "upload";
+  mode: "preset" | "upload" | "brand";
   styleId: string;
   colorPreference: string;
   uploadId: string;
@@ -216,6 +267,8 @@ export interface ProjectRow {
   status: "running" | "paused" | "completed" | "failed";
   page_count_target: number;
   style_id: string;
+  brand_template_id: string;
+  brand_template_json: string;
   assumptions_json: string;
   outline_json: string;
   init_sources_json: string;

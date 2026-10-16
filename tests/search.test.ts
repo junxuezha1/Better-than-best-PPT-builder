@@ -127,6 +127,37 @@ test("Responses search enables web_search and strict source schema", async () =>
   }
 });
 
+test("GotoCC search omits unsupported tool limits while retaining real search and source schema", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  const controller = new AbortController();
+  globalThis.fetch = async (input, init) => {
+    requestedUrls.push(String(input));
+    const body = JSON.parse(String(init?.body));
+    if ("max_tool_calls" in body) {
+      return Response.json({ error: { message: "Unsupported parameter: max_tool_calls" } }, { status: 400 });
+    }
+    assert.deepEqual(body.tools, [{ type: "web_search" }]);
+    assert.equal(body.stream, true);
+    assert.equal(body.text.format.type, "json_schema");
+    assert.equal(body.text.format.strict, true);
+    assert.ok(init?.signal);
+    return new Response(`data: ${JSON.stringify({
+      type: "response.output_text.delta",
+      delta: JSON.stringify({ results: [{ title: "Verified result", url: "https://result.example", content: "x".repeat(500) }] }),
+    })}\n\ndata: [DONE]\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+  };
+  try {
+    for (const baseUrl of ["https://gotocc.xyz/", "https://gotocc.xyz/v1/"]) {
+      const results = await webSearch({ baseUrl, apiKey: "test-key", protocol: "responses", model: "gpt-6-astra" }, "query", { signal: controller.signal });
+      assert.equal(results[0]?.title, "Verified result");
+    }
+    assert.deepEqual(requestedUrls, ["https://gotocc.xyz/v1/responses", "https://gotocc.xyz/v1/responses"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Responses search retries a temporary capacity error", async () => {
   const originalFetch = globalThis.fetch;
   let requestCount = 0;

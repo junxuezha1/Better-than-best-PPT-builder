@@ -79,6 +79,46 @@ test("Responses joins SSE output text deltas", async () => {
   }
 });
 
+test("Chat Completions streams and joins SSE content deltas", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | undefined;
+  const phases: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(
+      [
+        `data: ${JSON.stringify({ choices: [{ delta: { content: '{"shared":' } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "{}" } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "}" } }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join(""),
+      { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    );
+  };
+  try {
+    const result = await completeChat(
+      {
+        baseUrl: "https://gateway.example",
+        apiKey: "test-key",
+        protocol: "chat_completions",
+        model: "test-model",
+      },
+      [{ role: "user", content: "plan" }],
+      { stream: true, onProgress: (update) => phases.push(update.phase) },
+    );
+    assert.equal(result, '{"shared":{}}');
+    assert.equal(requestBody?.stream, true);
+    assert.deepEqual(phases, [
+      "request_sent",
+      "response_started",
+      "output_streaming",
+      "completed",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("model gateway HTML errors are reduced to a readable 524 message", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(
@@ -114,11 +154,33 @@ test("extractSvg fills missing 1280x720 attributes", () => {
   assert.match(svg, /height="720"/);
 });
 
+test("extractSvg removes rasterizing filters from text containers", () => {
+  const svg = extractSvg(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+    <defs><filter id="shadow"><feDropShadow stdDeviation="8" /></filter></defs>
+    <g filter="url(#shadow)"><rect width="500" height="260" filter="url(#shadow)" /><text x="40" y="80">清晰文字</text></g>
+    <text x="40" y="320" style="font-size: 32px; filter: url(#shadow); fill: #111">另一段文字</text>
+    <style>.shadowed { filter: url(#shadow); fill: #111; }</style>
+  </svg>`);
+
+  assert.doesNotMatch(svg, /<g\b[^>]*\bfilter\s*=/i);
+  assert.doesNotMatch(svg, /<text\b[^>]*(?:\bfilter\s*=|\bfilter\s*:)/i);
+  assert.doesNotMatch(svg, /<style\b[^>]*>[\s\S]*\bfilter\s*:/i);
+  assert.match(svg, /<rect\b[^>]*filter="url\(#shadow\)"/i);
+  assert.match(svg, /<filter id="shadow">/i);
+});
+
 test("extractSvg rejects a wrong canvas", () => {
   assert.throws(
     () => extractSvg('<svg viewBox="0 0 1024 768" width="1024" height="768"></svg>'),
     /viewBox 必须是 0 0 1280 720/,
   );
+});
+
+test("extractSvg preserves preview features in real business copy", () => {
+  const svg = extractSvg('<svg viewBox="0 0 1280 720" width="1280" height="720"><rect width="1280" height="720" fill="#ffffff"/><text x="80" y="120" font-size="32" fill="#17243a">整合稿件处理、邮件预览与通知记录</text><text x="80" y="180" font-size="32" fill="#17243a">打印预览支持编辑核对后发送</text></svg>');
+  assert.match(svg, /邮件预览与通知记录/);
+  assert.match(svg, /打印预览支持编辑核对后发送/);
+  assert.throws(() => extractSvg('<svg><text>邮件预览截图待补充</text></svg>'), /未完成的占位文案/);
 });
 
 test("extractSvg rejects unsafe or unfinished slide content", () => {

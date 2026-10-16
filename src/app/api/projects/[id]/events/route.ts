@@ -1,3 +1,6 @@
+import { exportFailure } from "@/lib/export-service";
+import { PptxExportError } from "@/lib/export-types";
+import { normalizeArtifactsIsolated } from "@/lib/artifact-audit";
 import { onProjectChange } from "@/lib/events-bus";
 import { auditProjectArtifacts } from "@/lib/pipeline";
 import { serializeProject } from "@/lib/serialize";
@@ -12,8 +15,9 @@ export async function GET(
   const { id } = await context.params;
   try {
     getProject(id);
-    auditProjectArtifacts(id);
-  } catch {
+    await auditProjectArtifacts(id, normalizeArtifactsIsolated, request.signal);
+  } catch (error) {
+    if (error instanceof PptxExportError) return exportFailure(error);
     return new Response("not found", { status: 404 });
   }
 

@@ -13,6 +13,17 @@ import {
   X,
 } from "lucide-react";
 import type { ProjectDTO } from "@/lib/client-types";
+import { ThemeChooser } from "./ThemeChooser";
+import { getDesignTheme } from "@/lib/theme-catalog";
+import type { ThemeSelection } from "@/lib/theme-catalog";
+
+export interface DesignConfirmation {
+  mode: "preset" | "upload";
+  styleId: string;
+  colorPreference: string;
+  theme?: ThemeSelection | null;
+  backgroundOnly?: boolean;
+}
 
 export function DesignReferenceGate({
   project,
@@ -25,24 +36,37 @@ export function DesignReferenceGate({
   open: boolean;
   onClose: () => void;
   onUpload: (file: File) => Promise<boolean>;
-  onConfirm: (input: { mode: "preset" | "upload"; styleId: string; colorPreference: string }) => void;
+  onConfirm: (input: DesignConfirmation) => void;
 }) {
-  const [mode, setMode] = useState<"preset" | "upload">(project.designReference.mode);
+  const initialMode = project.designReference.mode === "brand" ? "preset" : project.designReference.mode;
+  const [mode, setMode] = useState<"preset" | "upload">(initialMode);
   const [styleId, setStyleId] = useState(project.designReference.styleId || project.style.id);
   const [colorPreference, setColorPreference] = useState(project.designReference.colorPreference);
   const [uploading, setUploading] = useState(false);
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const [allowBasic, setAllowBasic] = useState(false);
+  const [theme, setTheme] = useState<ThemeSelection | null>(project.designTheme?.selection ?? null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setMode(project.designReference.mode);
+    if (!open) return;
+    const generated = project.backgroundGeneration;
+    const pending = generated?.status === "ready" && generated.updatedAt > (project.designTheme?.updatedAt ?? "") ? generated.candidate : null;
+    setTheme(pending ?? project.designTheme?.selection ?? null);
+    setMode(project.designReference.mode === "brand" ? "preset" : project.designReference.mode);
     setStyleId(project.designReference.styleId || project.style.id);
     setColorPreference(project.designReference.colorPreference);
-  }, [project.designReference, project.style.id]);
+  // Reset when opening or receiving a confirmed revision, not on every SSE snapshot.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, project.id, project.designReference.updatedAt, project.designTheme?.updatedAt]);
 
   const draftReady = project.pages.filter((page) => page.draftStatus === "ready").length;
+  const hasDesign = project.pages.some((page) => page.designSvg);
   const selectedStyle = project.styles.find((style) => style.id === styleId) ?? project.style;
-  const uploadReady = project.designReference.status === "ready" && Boolean(project.designReference.profile);
-  const canConfirm = mode === "preset" || uploadReady;
+  const uploadReady = ["ready", "confirmed"].includes(project.designReference.status) && Boolean(project.designReference.profile);
+  const canConfirm = (mode === "preset" ? Boolean(theme || allowBasic) : uploadReady) && !uploading && !backgroundBusy;
+  const selectedTheme = theme ? getDesignTheme(theme.themeId, theme.definition) : null;
+  const canReplace = Boolean(theme && project.designTheme?.selection?.themeId === theme.themeId && project.status !== "running" && project.pages.some(page => page.designStatus === "ready"));
 
   if (!open) return null;
   return (
@@ -51,8 +75,8 @@ export function DesignReferenceGate({
         <div className="reference-gate-rail">
           <div>
             <div className="reference-gate-index">FINAL ART DIRECTION</div>
-            <h2>在进入设计稿前，<br />先确定整套视觉语言。</h2>
-            <p>初稿已经固定内容、版式与配图意图。这里选择的只是一套视觉系统，不会改写事实。</p>
+            <h2>{hasDesign ? <>调整背景，<br />预览整套效果。</> : <>为每份演示，<br />创造专属视觉。</>}</h2>
+            <p>用当前内容比较封面与正文。背景、字色和版式一起确定，事实与引用保持原意。</p>
           </div>
           <div className="reference-gate-progress">
             <div><span>01</span><Check size={14} />内容与结构</div>
@@ -60,36 +84,40 @@ export function DesignReferenceGate({
             <div className="active"><span>03</span><Palette size={14} />设计参考</div>
             <div><span>04</span><Sparkles size={14} />最终设计</div>
           </div>
-          <div className="reference-gate-note">确认后，Agent 才会开始逐页完成最终设计。</div>
+          <div className="reference-gate-note">{hasDesign ? "更换主题会重新设计；同主题可仅替换背景，保留现有文字与排版。" : "确认后，Agent 才会开始逐页完成最终设计。"}</div>
         </div>
 
         <div className="reference-gate-main">
           <div className="flex items-start justify-between">
             <div>
               <div className="text-[10px] font-bold tracking-[0.16em] text-[#2f80ff]">DESIGN REFERENCE</div>
-              <h3 className="mt-2 text-[25px] font-semibold tracking-[-0.045em]">你有参考的 PPT 格式吗？</h3>
-              <p className="mt-2 text-[11px] text-[#7b899b]">选择内置视觉方向，或者上传一份参考稿让模型理解颜色、图片与版式节奏。</p>
+              <h3 className="mt-2 text-[25px] font-semibold tracking-[-0.045em]">让整套演示有自己的视觉语言</h3>
+              <p className="mt-2 text-[11px] text-[#7b899b]">让 AI 按内容生成专属背景，或沿用参考演示的视觉风格。</p>
             </div>
             <button className="reference-close" onClick={onClose} aria-label="暂时关闭"><X size={17} /></button>
           </div>
 
           <div className="reference-mode-switch">
             <button className={mode === "preset" ? "active" : ""} onClick={() => setMode("preset")}>
-              <Palette size={15} /><span>选择内置风格<small>无需额外模型调用</small></span>
+              <Palette size={15} /><span>AI 原创背景<small>完整提示词与专属画面</small></span>
             </button>
-            <button className={mode === "upload" ? "active" : ""} onClick={() => setMode("upload")}>
+            <button className={mode === "upload" ? "active" : ""} onClick={() => { setMode("upload"); setTheme(null); }}>
               <FileUp size={15} /><span>上传参考文件<small>PPT / PPTX / PDF</small></span>
             </button>
           </div>
 
           <div className="custom-scroll min-h-0 flex-1 overflow-y-auto pr-1">
-            {mode === "preset" ? (
-              <div className="reference-style-grid">
+            {mode === "preset" && <ThemeChooser project={project} selection={theme} onBusy={setBackgroundBusy} onChange={(next) => {
+              setTheme(next);
+              if (next) { setMode("preset"); setStyleId(getDesignTheme(next.themeId, next.definition).baseStyleId); }
+            }} />}
+            {mode === "preset" && !theme ? (
+              <details className="background-adjustments"><summary>仅使用基础配色，不生成背景</summary><div className="reference-style-grid">
                 {project.styles.map((style) => (
                   <button
                     key={style.id}
                     className={styleId === style.id ? "reference-style-card active" : "reference-style-card"}
-                    onClick={() => setStyleId(style.id)}
+                    onClick={() => { setStyleId(style.id); setAllowBasic(true); }}
                   >
                     <div className="flex items-start justify-between">
                       <div>
@@ -117,8 +145,8 @@ export function DesignReferenceGate({
                     placeholder={`例如：保留 ${selectedStyle.name}，但降低蓝色饱和度`}
                   />
                 </label>
-              </div>
-            ) : (
+              </div></details>
+            ) : mode === "upload" ? (
               <div className="reference-upload-panel">
                 <input
                   ref={inputRef}
@@ -142,21 +170,23 @@ export function DesignReferenceGate({
 
                 <ReferenceAnalysis project={project} />
               </div>
-            )}
+            ) : null}
+            {theme && <label className="reference-color-note"><span>设计补充</span><input value={colorPreference} onChange={event => setColorPreference(event.target.value)} placeholder="例如：标题更醒目，减少卡片嵌套" /></label>}
           </div>
 
           <div className="reference-gate-actions">
             <div>
               <span className="block text-[9px] text-[#8a97a8]">即将采用</span>
               <strong className="mt-0.5 block text-[11px]">
-                {mode === "preset" ? selectedStyle.name : project.designReference.profile?.name || "等待分析参考稿"}
+                {selectedTheme?.name || (mode === "preset" ? allowBasic ? selectedStyle.name : "等待生成背景" : project.designReference.profile?.name || "等待分析参考稿")}
               </strong>
             </div>
+            {canReplace && <button className="theme-replace-button" disabled={!canConfirm} onClick={() => onConfirm({ mode, styleId, colorPreference, theme, backgroundOnly: true })}>仅替换整套背景</button>}
             <button
               disabled={!canConfirm || project.designReference.status === "processing"}
-              onClick={() => onConfirm({ mode, styleId, colorPreference })}
+              onClick={() => onConfirm({ mode, styleId, colorPreference, theme })}
             >
-              确认并开始最终设计<ChevronRight size={15} />
+              {hasDesign ? "应用主题并重新设计" : "确认并开始最终设计"}<ChevronRight size={15} />
             </button>
           </div>
         </div>

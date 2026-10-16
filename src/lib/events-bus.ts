@@ -1,6 +1,8 @@
+import { getProjectRuntimeState } from "./runtime-state.ts";
+
 type Listener = (projectId: string) => void;
 
-const listeners = new Set<Listener>();
+const listeners = getProjectRuntimeState().projectListeners;
 
 export function emitProjectChange(projectId: string) {
   for (const listener of listeners) {

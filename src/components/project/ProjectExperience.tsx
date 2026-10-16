@@ -12,7 +12,9 @@ import { useProjectController } from "./useProjectController";
 import { ProjectIcon as Icon, type ProjectIconName as IconName } from "./ProjectIcon";
 import { RequirementsFlow } from "./RequirementsFlow";
 import { SpatialStructureBoard } from "./SpatialStructureBoard";
-import { DesignReferenceGate } from "./DesignReferenceGate";
+import { DesignReferenceGate, type DesignConfirmation } from "./DesignReferenceGate";
+import { ExportMenu } from "./ExportMenu";
+import { MaterialSummary } from "./MaterialSummary";
 
 type Surface = "search" | "draft" | "design";
 type WorkspaceView = "structure" | "workbench";
@@ -38,7 +40,9 @@ export default function ProjectExperience({ projectId }: { projectId: string }) 
   }, [project]);
 
   useEffect(() => {
-    if (project?.stage === "style_reference" && project.designReference.status !== "confirmed") {
+    if (project?.stage === "style_reference"
+      && project.designReference.status !== "confirmed"
+      && project.designReference.mode !== "brand") {
       setReferenceOpen(true);
       setSurface("draft");
     }
@@ -177,16 +181,18 @@ function ReferenceGateLayer({
   onOpen: () => void;
   onClose: () => void;
   onUpload: (file: File) => Promise<boolean>;
-  onConfirm: (input: { mode: "preset" | "upload"; styleId: string; colorPreference: string }) => void;
+  onConfirm: (input: DesignConfirmation) => void;
 }) {
-  const needed = project.stage === "style_reference" && project.designReference.status !== "confirmed";
-  if (!needed) return null;
+  const needed = project.stage === "style_reference"
+    && project.designReference.status !== "confirmed"
+    && project.designReference.mode !== "brand";
+  if (project.designReference.mode === "brand" || !project.pages.some(page => page.draftStatus === "ready")) return null;
   return (
     <>
       {!open && (
         <button className="reference-gate-reopen" onClick={onOpen}>
           <Icon name="palette" size={15} />
-          确认设计参考
+          {needed ? "确认设计参考" : "主题与背景"}
         </button>
       )}
       <DesignReferenceGate
@@ -267,9 +273,9 @@ function Workbench({
             </span>
           </div>
           <div className="flex items-center justify-end gap-1.5">
-            <button className="top-action rail-toggle" onClick={() => setRailOpen(true)}>
+            <button className={cx("top-action rail-toggle", project.status === "failed" && "!text-red-600")} onClick={() => setRailOpen(true)} title={project.status === "failed" ? project.errorText || "生成中断" : "查看进度"}>
               <Icon name="sparkle" size={14} />
-              <span className="hidden sm:inline">进度</span>
+              <span className={project.status === "failed" ? "" : "hidden sm:inline"}>{project.status === "failed" ? "生成中断" : "进度"}</span>
             </button>
             <button className="top-action desktop-run-toggle" onClick={onToggleRun}>
               <Icon name={project.status === "running" ? "pause" : "play"} size={14} />
@@ -279,17 +285,7 @@ function Workbench({
               <Icon name="play" size={14} />
               <span className="hidden sm:inline">放映</span>
             </button>
-            {exportReady ? (
-              <a href={"/api/projects/" + project.id + "/export"} className="primary-button">
-                <Icon name="download" size={14} />
-                <span className="hidden sm:inline">导出</span>
-              </a>
-            ) : (
-              <button className="primary-button" disabled title="全部设计稿完成后才能导出">
-                <Icon name="download" size={14} />
-                <span className="hidden sm:inline">导出</span>
-              </button>
-            )}
+            <ExportMenu projectId={project.id} ready={exportReady} />
           </div>
         </header>
 
@@ -345,7 +341,7 @@ function Workbench({
               ))}
             </div>
             <div className="canvas-grid flex min-h-0 flex-1 items-center justify-center overflow-auto px-4 py-5 md:px-7 md:py-7">
-              <CanvasSurface page={page} surface={surface} />
+              <CanvasSurface page={page} surface={surface} projectStatus={project.status} />
             </div>
             <div className="shrink-0 border-t border-[#e0e4ea] bg-white">
               <div className="flex items-center gap-2 px-4 pt-3 text-[11px] font-medium text-[#75849a]">
@@ -403,7 +399,7 @@ function Workbench({
   );
 }
 
-function CanvasSurface({ page, surface }: { page: PageDTO | null; surface: Surface }) {
+function CanvasSurface({ page, surface, projectStatus }: { page: PageDTO | null; surface: Surface; projectStatus: string }) {
   if (!page) return <EmptyCanvas label="还没有可预览的页面" />;
   if (surface === "search") return <SearchCanvas page={page} />;
   const svg = surface === "draft" ? page.draftSvg : page.designSvg;
@@ -413,9 +409,11 @@ function CanvasSurface({ page, surface }: { page: PageDTO | null; surface: Surfa
       <EmptyCanvas
         label={
           status === "running"
-            ? surface === "draft"
-              ? "正在编排这一页的初稿…"
-              : "正在完成这一页的视觉设计…"
+            ? projectStatus !== "running"
+              ? projectStatus === "failed" ? "这一页生成中断，点击继续重试" : "这一页已暂停"
+              : surface === "draft"
+                ? "正在编排这一页的初稿…"
+                : "正在完成这一页的视觉设计…"
             : surface === "draft"
               ? "这页初稿还未生成"
               : "这页设计稿还未生成"
@@ -564,10 +562,11 @@ function ProcessRail({
       </div>
 
       <div className="custom-scroll flex-1 space-y-3 overflow-y-auto bg-[#fbfcfe] p-3">
+        <MaterialSummary materials={project.contentMaterials} />
         <RailStageCard
           tone="blue"
           icon="search"
-          title={searchReady === project.pages.length ? "页面资料已就绪" : "正在逐页检索资料"}
+          title={searchReady === project.pages.length ? "页面资料已就绪" : project.status === "running" && project.stage === "research" ? "正在逐页检索资料" : "页面资料未完成"}
           meta={searchReady + " / " + project.pages.length + " 页"}
           progress={ratio(searchReady, project.pages.length)}
         >
@@ -611,7 +610,7 @@ function ProcessRail({
         <RailStageCard
           tone={project.deckPlan?.status === "ready" ? "green" : "neutral"}
           icon="target"
-          title={project.deckPlan?.status === "ready" ? "整套内容策划已就绪" : "正在统一内容策划"}
+          title={project.deckPlan?.status === "ready" ? "整套内容策划已就绪" : project.status === "running" && project.stage === "planning" ? "正在统一内容策划" : "整套内容策划待完成"}
           meta={project.deckPlan?.shared.concept || "统一版式、字阶与配图意图"}
           progress={project.deckPlan?.status === "ready" ? 1 : project.stage === "planning" ? 0.5 : 0}
         />
@@ -620,7 +619,7 @@ function ProcessRail({
           <RailStageCard
             tone={surface === "draft" ? "purple" : "neutral"}
             icon="file"
-            title={draftReady === project.pages.length ? "PPT 初稿已就绪" : "正在编排 PPT 初稿"}
+            title={draftReady === project.pages.length ? "PPT 初稿已就绪" : project.status === "running" && project.stage === "draft" ? "正在编排 PPT 初稿" : project.status === "failed" && project.pages.some(item => item.draftStatus === "running") ? "PPT 初稿生成中断" : "PPT 初稿待完成"}
             meta={draftReady + " / " + project.pages.length + " 页"}
             progress={ratio(draftReady, project.pages.length)}
           />
@@ -638,7 +637,7 @@ function ProcessRail({
           <RailStageCard
             tone={surface === "design" ? "green" : "neutral"}
             icon="palette"
-            title={designReady === project.pages.length ? "设计稿已就绪" : "正在完成视觉设计"}
+            title={designReady === project.pages.length ? "设计稿已就绪" : project.status === "running" && project.stage === "design" ? "正在完成视觉设计" : project.status === "failed" && project.pages.some(item => item.designStatus === "running") ? "视觉设计中断" : "视觉设计待完成"}
             meta={designReady + " / " + project.pages.length + " 页 · " + project.style.name}
             progress={ratio(designReady, project.pages.length)}
           />

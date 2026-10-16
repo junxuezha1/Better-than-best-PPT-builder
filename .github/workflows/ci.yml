@@ -1,0 +1,65 @@
+name: Export regression
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.22.0", "24"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install presentation validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libreoffice-impress fonts-noto-cjk poppler-utils
+      - run: npm ci
+      - name: Audit production dependencies with reviewed exceptions
+        run: node scripts/check-dependency-audit.mjs
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Generate reproducible SVG and PPTX samples
+        run: node --experimental-strip-types scripts/export-editable-sample.ts
+      - name: Validate original packages
+        run: |
+          node --experimental-strip-types scripts/check-pptx-package.ts --mode=editable --slides=2 --notes output/editable-pptx-sample/svg-export-editable.pptx
+          node --experimental-strip-types scripts/check-pptx-package.ts --mode=fidelity --slides=2 --notes output/editable-pptx-sample/svg-export-fidelity.pptx
+      - name: Open, resave and reopen samples in LibreOffice
+        shell: bash
+        run: |
+          set -euo pipefail
+          sample=output/editable-pptx-sample
+          mkdir -p "$sample/opened" "$sample/roundtrip" "$sample/reopened"
+          for mode in editable fidelity; do
+            timeout 60s libreoffice -env:UserInstallation="file://$RUNNER_TEMP/lo-open-$mode" --headless --convert-to pdf --outdir "$sample/opened" "$sample/svg-export-$mode.pptx"
+            test -s "$sample/opened/svg-export-$mode.pdf"
+            pdfinfo "$sample/opened/svg-export-$mode.pdf" | tee "$sample/opened/$mode-pdfinfo.txt"
+            test "$(pdfinfo "$sample/opened/svg-export-$mode.pdf" | awk '/^Pages:/ {print $2}')" = 2
+            timeout 60s libreoffice -env:UserInstallation="file://$RUNNER_TEMP/lo-save-$mode" --headless --convert-to 'pptx:Impress MS PowerPoint 2007 XML' --outdir "$sample/roundtrip" "$sample/svg-export-$mode.pptx"
+            test -s "$sample/roundtrip/svg-export-$mode.pptx"
+            node --experimental-strip-types scripts/check-pptx-package.ts --mode="$mode" --slides=2 --notes "$sample/roundtrip/svg-export-$mode.pptx"
+            timeout 60s libreoffice -env:UserInstallation="file://$RUNNER_TEMP/lo-reopen-$mode" --headless --convert-to pdf --outdir "$sample/reopened" "$sample/roundtrip/svg-export-$mode.pptx"
+            test -s "$sample/reopened/svg-export-$mode.pdf"
+            test "$(pdfinfo "$sample/reopened/svg-export-$mode.pdf" | awk '/^Pages:/ {print $2}')" = 2
+          done
+      - name: Save validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: export-validation-node-${{ matrix.node }}
+          path: output/editable-pptx-sample/
+          if-no-files-found: ignore
+          retention-days: 14

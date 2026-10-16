@@ -1,20 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowUpRight,
+  Check,
   History,
+  LockKeyhole,
   Plus,
   Settings,
   Sparkles,
 } from "lucide-react";
-import type { ProjectSummaryDTO } from "@/lib/client-types";
+import type { BrandTemplateDTO, ProjectSummaryDTO, StyleDTO } from "@/lib/client-types";
+import { BrandTemplateDialog } from "./BrandTemplateDialog";
+import { ContentMaterialInput } from "./ContentMaterialInput";
 
 export default function HomeScreen() {
   const router = useRouter();
   const [text, setText] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [usePreparedPlan, setUsePreparedPlan] = useState(true);
+  const submitting = useRef(false);
   const [projects, setProjects] = useState<ProjectSummaryDTO[]>([]);
+  const [brandTemplates, setBrandTemplates] = useState<BrandTemplateDTO[]>([]);
+  const [styles, setStyles] = useState<StyleDTO[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(true);
@@ -24,26 +35,46 @@ export default function HomeScreen() {
       .then((res) => res.json())
       .then((data) => {
         setProjects(data.projects ?? []);
+        setBrandTemplates(data.brandTemplates ?? []);
+        setStyles(data.styles ?? []);
         setReady(Boolean(data.configured));
-      });
+      })
+      .catch(() => setError("未能加载项目配置，请检查服务后刷新。"));
   }, []);
 
   async function start() {
-    if (!text.trim()) return;
+    if (submitting.current || (!text.trim() && !files.length)) return;
+    submitting.current = true;
     setBusy(true);
     setError("");
-    const response = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestText: text.trim() }),
-    });
-    const data = await response.json();
-    setBusy(false);
-    if (!response.ok) {
-      setError(data.error || "创建失败");
-      return;
+    try {
+      let body: FormData | string;
+      if (files.length) {
+        body = new FormData();
+        body.set("requestText", text.trim());
+        body.set("brandTemplateId", selectedTemplateId);
+        body.set("usePreparedPlan", String(usePreparedPlan));
+        for (const file of files) body.append("files", file);
+      } else {
+        body = JSON.stringify({ requestText: text.trim(), brandTemplateId: selectedTemplateId || undefined });
+      }
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        ...(typeof body === "string" ? { headers: { "Content-Type": "application/json" } } : {}),
+        body,
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || (response.status === 413 ? "资料超过上传上限，请缩小文件后重试。" : "创建失败，请稍后重试。"));
+      }
+      if (typeof data?.id !== "string") throw new Error("未收到项目编号，请稍后重试。");
+      router.push(`/projects/${data.id}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "连接中断，未能创建项目，请重试。");
+    } finally {
+      submitting.current = false;
+      setBusy(false);
     }
-    router.push(`/projects/${data.id}`);
   }
 
   return (
@@ -62,7 +93,7 @@ export default function HomeScreen() {
           </button>
         </div>
 
-        <button className="atelier-new" onClick={() => setText("")}>
+        <button className="atelier-new" disabled={busy} onClick={() => { setText(""); setFiles([]); setUsePreparedPlan(true); setError(""); }}>
           <Plus size={16} />
           新建演示
           <ArrowUpRight className="ml-auto" size={14} />
@@ -95,7 +126,7 @@ export default function HomeScreen() {
       </aside>
 
       <main className="relative flex h-full min-w-0 flex-1 flex-col md:ml-[292px]">
-        <header className="flex h-[70px] items-center justify-between px-5 md:px-9">
+        <header className="flex h-[70px] shrink-0 items-center justify-between px-5 md:px-9">
           <div className="text-[10px] font-semibold tracking-[0.2em] text-[#8492a6]">BLUEPRINT ATELIER / 01</div>
           <button className="atelier-icon-light md:hidden" onClick={() => router.push("/settings")} aria-label="打开设置">
             <Settings size={17} />
@@ -106,7 +137,7 @@ export default function HomeScreen() {
           </div>
         </header>
 
-        <section className="relative flex flex-1 items-center px-5 pb-10 md:px-[7vw]">
+        <section className="material-home-section relative flex min-h-0 flex-1 items-center overflow-y-auto px-5 pb-10 md:px-[7vw]">
           <div className="atelier-sequence" aria-hidden>01—05</div>
           <div className="w-full max-w-[1040px]">
             <div className="atelier-kicker">
@@ -118,22 +149,52 @@ export default function HomeScreen() {
               <span>编排成</span> 演示
             </h1>
             <div className="mt-6 grid items-end gap-6 lg:grid-cols-[minmax(0,700px)_1fr]">
-              <div className="atelier-composer">
-                <textarea
-                  value={text}
-                  onChange={(event) => setText(event.target.value)}
-                  placeholder="输入主题、公司或想讲清楚的问题"
-                  aria-label="演示主题"
-                  onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void start();
-                  }}
-                />
-                <div className="flex items-center justify-between border-t border-[#dbe3ed] pt-3">
-                  <span className="text-[10px] tracking-[0.12em] text-[#91a0b3]">{text.length} CHARACTERS</span>
-                  <button className="atelier-start" disabled={busy || !text.trim()} onClick={() => void start()}>
-                    {busy ? "正在建立项目" : "开始编排"}
-                    <ArrowUpRight size={16} />
-                  </button>
+              <div>
+                <div className="brand-lock-strip" aria-label="选择品牌模板">
+                  <div className="brand-lock-label"><LockKeyhole size={14} /><span>品牌模板</span></div>
+                  <div className="brand-lock-options custom-scroll">
+                    <button className={!selectedTemplateId ? "active" : ""} onClick={() => setSelectedTemplateId("")}>无模板</button>
+                    {brandTemplates.map((template) => (
+                      <button
+                        key={template.id}
+                        className={selectedTemplateId === template.id ? "brand-template-pill active" : "brand-template-pill"}
+                        onClick={() => setSelectedTemplateId(template.id)}
+                      >
+                        <img src={template.logoUrl} alt="" />
+                        <span>{template.name}<small>{template.organizationName}</small></span>
+                        <i style={{ background: template.primaryColor }} />
+                        <i style={{ background: template.secondaryColor }} />
+                        {selectedTemplateId === template.id && <Check size={13} />}
+                      </button>
+                    ))}
+                    <button className="brand-template-add" onClick={() => setTemplateDialogOpen(true)}><Plus size={14} />新建模板</button>
+                  </div>
+                </div>
+                <div className="atelier-composer">
+                  <textarea
+                    value={text}
+                    disabled={busy}
+                    onChange={(event) => setText(event.target.value)}
+                    placeholder="输入主题或制作要求，也可以直接上传资料"
+                    aria-label="演示主题"
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); void start(); }
+                    }}
+                  />
+                  <ContentMaterialInput
+                    files={files}
+                    onChange={setFiles}
+                    usePreparedPlan={usePreparedPlan}
+                    onPreparedPlanChange={setUsePreparedPlan}
+                    disabled={busy}
+                  />
+                  <div className="flex items-center justify-between border-t border-[#dbe3ed] pt-3">
+                    <span className="text-[10px] tracking-[0.12em] text-[#91a0b3]">{text.length} CHARACTERS</span>
+                    <button className="atelier-start" disabled={busy || (!text.trim() && !files.length)} onClick={() => void start()}>
+                      {busy ? (files.length ? "正在上传并读取资料" : "正在建立项目") : "开始编排"}
+                      <ArrowUpRight size={16} />
+                    </button>
+                  </div>
                 </div>
               </div>
               <p className="max-w-[250px] text-[12px] leading-6 text-[#738299]">
@@ -146,10 +207,19 @@ export default function HomeScreen() {
                 <ArrowUpRight size={14} />
               </button>
             )}
-            {error && <p className="mt-4 text-[12px] text-[#c53535]">{error}</p>}
+            {error && <p className="mt-4 text-[12px] text-[#c53535]" role="alert">{error}</p>}
           </div>
         </section>
       </main>
+      <BrandTemplateDialog
+        open={templateDialogOpen}
+        styles={styles}
+        onClose={() => setTemplateDialogOpen(false)}
+        onCreated={(template) => {
+          setBrandTemplates((current) => [template, ...current]);
+          setSelectedTemplateId(template.id);
+        }}
+      />
     </div>
   );
 }

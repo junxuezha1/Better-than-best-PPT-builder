@@ -99,6 +99,13 @@ export const ORIGINAL_CONTENT_SVG_PROMPT = `作为精通信息架构与 SVG 编�
 
 请你根据我的内容输出SVG代码，我的内容是：`;
 
+export const EDITABLE_SVG_RULES = `## 可编辑 PPTX 兼容建议
+- 保持 SVG 原生 text / tspan，不把标题、正文、数字转为 path 或整张图片；显式设置 x、y、font-size、font-family、fill。换行使用带 x 和 dy 的 tspan。
+- 为主要对象提供稳定且唯一的 id，并可添加 data-pptx-role="title|body|number|shape|image|background"。这些属性只说明角色，不改变画面，不输出说明文字。
+- 真实图片使用独立 image，href 为输入提供的 PNG/JPEG base64 data URI；明确 x/y/width/height 和 preserveAspectRatio。不得编造 base64 或外部图片 URL，不将图片与正文合成一张背景。
+- 基础图形使用 rect/circle/ellipse/line/polygon/path；优先显式属性或简单 class。少用复杂 CSS、文本变形、沿路径文字、混合模式。复杂效果尽量限定在单一图形，避免给包含标题正文的整组加蒙版或裁切。
+- 这些建议用于增强新稿编辑能力，不能更改输入事实、原帖 Bento 合同或既定版式。`;
+
 const SVG_DELIVERY_RULES = `## SVG 交付规则
 1. 只输出单个完整的 <svg>...</svg>，第一个非空字符必须是 <svg，最后一个非空字符必须是 </svg>；前后不得出现 Markdown、解释、分析过程或对 SVG 标签的文字引用。根元素必须同时包含 viewBox="0 0 1280 720"、width="1280"、height="720"。
 2. 使用 SVG 原生图形、path、text 和 tspan；禁止 foreignObject、script、外部图片 URL 和无法在 Office 稳定显示的 HTML/CSS。
@@ -107,7 +114,10 @@ const SVG_DELIVERY_RULES = `## SVG 交付规则
 5. 只使用输入数据能支持的事实。允许忠实压缩和重写成长短合适的上屏文案，不得编造数字、年份、客户、案例、资质或来源。
 6. 禁止出现“待补充”“待核实”“占位”“示意图区域”“Lorem ipsum”等制作过程文案，也禁止输出空卡片。
 7. 不得自行增加输入中没有的英文眉题、PRESENTED BY、EDITION、CONFIDENTIAL、版本年份、署名、公司标签或营销套话。
-8. 先在内部提炼一个页面结论和 2–4 组支撑信息，再直接输出 SVG；不要把研究摘要或 URL 原样堆进页面。只有引用关键数据时，才在页脚用极短来源名标注。`;
+8. 先在内部提炼一个页面结论和 2–4 组支撑信息，再直接输出 SVG；不要把研究摘要或 URL 原样堆进页面。只有引用关键数据时，才在页脚用极短来源名标注。
+9. 阴影滤镜只能直接应用于 rect、path、circle 等纯图形元素。禁止在 svg、g、text、tspan、use 等容器或文字元素上使用 filter，也禁止通过 CSS filter 让文字进入滤镜栅格层。
+
+${EDITABLE_SVG_RULES}`;
 
 const CONTENT_DRAFT_SVG_SYSTEM = `${ORIGINAL_CONTENT_SVG_PROMPT}
 
@@ -160,6 +170,7 @@ export function draftUserPrompt(input: {
   deckSystem?: DeckVisualSystem;
   pagePlan?: DeckPagePlan;
   instruction?: string;
+  brandContract?: Record<string, unknown> | null;
 }): string {
   return `任务：根据输入资料生成一页完整的策划稿 SVG。先忠实提炼内容，再让版式服务于内容；不要输出思考过程。
 
@@ -174,6 +185,7 @@ ${JSON.stringify(
     shared_deck_system: input.deckSystem,
     page_plan: input.pagePlan,
     latest_instruction: input.instruction ?? "",
+    brand_template: input.brandContract ?? null,
   },
   null,
   2,
@@ -208,9 +220,12 @@ ${JSON.stringify(reference, null, 2)}
 5. 必须把风格落实到背景材质、色彩系统、字阶、卡片形态、分隔、图形语言、数据编码、连线、图例和主题装饰；不能只做换色，不能只替换背景色和描边色。
 6. 策划稿中的图表、流程、关系或主题视觉必须在原区域内重构为完成度高的真实 SVG 信息图；禁止保留虚线框、空卡片或“图表区域”等占位文字。
 7. 视觉装饰必须与页面主题有关并服务信息表达，不用随机圆点、无意义曲线、假数据面板或泛科技 HUD 填空。
-8. 使用 SVG 原生元素；禁止 foreignObject、script、外部图片 URL。所有文字完整落在容器内，正文不小于 16px，辅助文字不小于 13px。
-9. 如果风格表达与可读性冲突，优先可读性。最终稿禁止出现“预览”“待补充”“待核实”“占位”“示意图区域”等过程文案。
-10. 一页只采用一个清晰一致的艺术方向；要像同一套高端演示中的一页，而不是组件库拼盘。
+8. 使用 SVG 原生元素；禁止 foreignObject、script、外部图片 URL。所有文字必须完整落在所属卡片或容器内，正文不小于 16px，辅助文字不小于 13px。先按容器可用宽度估算字数，单行放不下时必须使用多个 tspan 明确换行并设置 dy 行距；禁止依赖浏览器自动换行，禁止用缩小字号掩盖出框。
+9. 阴影滤镜只能直接应用于 rect、path、circle 等纯图形元素。禁止在 svg、g、text、tspan、use 等容器或文字元素上使用 filter，也禁止通过 CSS filter 让文字进入滤镜栅格层。
+10. 如果风格表达与可读性冲突，优先可读性。最终稿禁止出现“预览”“待补充”“待核实”“占位”“示意图区域”等过程文案。
+11. 一页只采用一个清晰一致的艺术方向；要像同一套高端演示中的一页，而不是组件库拼盘。
+
+${EDITABLE_SVG_RULES}
 
 风格包：
 名称：${style.name} (${style.nameEn})
@@ -233,6 +248,7 @@ export function designUserPrompt(input: {
   reference?: ReferenceStyleProfile | null;
   colorPreference?: string;
   instruction?: string;
+  brandContract?: Record<string, unknown> | null;
 }): string {
   return `任务：按照选定风格，把策划稿完成为高完成度设计稿。
 
@@ -252,6 +268,11 @@ ${JSON.stringify(input.reference ?? {}, null, 2)}
 
 用户色彩偏好：
 ${input.colorPreference?.trim() || "无额外偏好，以共享视觉合同与参考稿画像为准"}
+
+${input.brandContract ? `品牌模板合同：
+${JSON.stringify(input.brandContract, null, 2)}
+
+品牌 Logo 由系统在你输出后精确注入。必须保留合同中的 Logo 安全区，不得自行绘制、拼写或模拟 Logo，也不得生成第二个品牌标识。` : ""}
 
 策划稿 SVG：
 ${input.draftSvg}`;
@@ -291,7 +312,10 @@ export const DECK_PLAN_SYSTEM = `你是演示文稿的总策划与艺术指导�
           "query": "若为实拍图，需要什么画面；否则为空",
           "fallback": "没有实拍素材时如何用 SVG 完成表达"
         }
-      ]
+      ],
+      "brand_logo": {
+        "slot": "从 brand_template.candidate_logo_slots 中选择一个 id"
+      }
     }
   ]
 }
@@ -303,7 +327,8 @@ export const DECK_PLAN_SYSTEM = `你是演示文稿的总策划与艺术指导�
 4. 每个内容页至少规划一个有信息作用的视觉表达。需要真实空间、人物、产品或地点质感时用 photo；关系、流程、数字和抽象概念优先用原生 SVG 图形。
 5. photo 槽位在策划稿中要保留明确位置和画面意图；fallback 必须给出无照片时可完成交付的 SVG 方案。
 6. 封面、目录、章节、结束页不使用 Bento；内容页遵循原帖 Bento 方法。
-7. 不编造输入中没有的事实、数字、客户、年份和视觉素材。`;
+7. 不编造输入中没有的事实、数字、客户、年份和视觉素材。
+8. 输入存在 brand_template 时，每页必须选择一个 brand_logo.slot。先判断标题、正文、图表和视觉槽位实际占用，再按剩余空间的宽窄与方向选择兼容槽位；禁止按 page_type 固定分配横版、竖版或方版 Logo。竖版槽位只有在对应侧边确有连续竖向留白时才能使用。输入不存在品牌模板时省略 brand_logo。`;
 
 export const STRUCTURE_CHAT_SYSTEM = `你是演示结构编辑器。根据用户要求，基于当前完整页面结构提出一个可预览、可应用的最终结构版本。不要生成解释文章，不要直接执行修改。
 

@@ -1,4 +1,5 @@
 import { Resvg } from "@resvg/resvg-js";
+import { normalizeSvgForSharpText } from "./svg-sharpness.ts";
 import type { LlmProtocol, ModelConfig } from "./types";
 
 export type ChatContentPart =
@@ -282,7 +283,10 @@ async function readEventStreamText(
     const choices = payload.choices;
     if (Array.isArray(choices) && choices[0] && typeof choices[0] === "object") {
       const delta = (choices[0] as { delta?: { content?: unknown } }).delta;
-      if (typeof delta?.content === "string") deltaText += delta.content;
+      if (typeof delta?.content === "string") {
+        reportOnce({ phase: "output_streaming" });
+        deltaText += delta.content;
+      }
     }
   };
 
@@ -332,6 +336,7 @@ export async function completeChat(
           content: chatCompletionsContent(message.content),
         })),
         max_tokens: maxTokens,
+        stream: options?.stream || undefined,
         response_format: options?.jsonSchema
           ? {
               type: "json_schema",
@@ -346,6 +351,8 @@ export async function completeChat(
       signal,
     });
   } else if (protocol === "responses") {
+    // GotoCC rejects this optional Responses parameter before running the model.
+    const supportsMaxToolCalls = new URL(config.baseUrl).hostname !== "gotocc.xyz";
     response = await fetch(joinUrl(config.baseUrl, "/v1/responses"), {
       method: "POST",
       headers: {
@@ -362,7 +369,7 @@ export async function completeChat(
         temperature,
         stream: options?.stream || undefined,
         tools: options?.webSearch ? [{ type: "web_search" }] : undefined,
-        max_tool_calls: options?.maxToolCalls,
+        max_tool_calls: supportsMaxToolCalls ? options?.maxToolCalls : undefined,
         text: options?.jsonSchema
           ? {
               format: {
@@ -511,8 +518,8 @@ export function extractJsonObject(text: string): unknown {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
-export function extractSvg(text: string): string {
-  const cached = svgExtractionCache.get(text);
+export function extractSvg(text: string, validateBeforeRender?: (svg: string) => string): string {
+  const cached = validateBeforeRender ? undefined : svgExtractionCache.get(text);
   if (cached) return cached;
   const candidates = collectSvgCandidates(text);
   if (candidates.length === 0) {
@@ -522,8 +529,8 @@ export function extractSvg(text: string): string {
   let firstError: unknown;
   for (const candidate of candidates) {
     try {
-      const svg = validateSvgCandidate(candidate);
-      svgExtractionCache.set(text, svg);
+      const svg = validateSvgCandidate(candidate, validateBeforeRender);
+      if (!validateBeforeRender) svgExtractionCache.set(text, svg);
       while (svgExtractionCache.size > SVG_EXTRACTION_CACHE_LIMIT) {
         const oldest = svgExtractionCache.keys().next().value;
         if (typeof oldest !== "string") break;
@@ -531,6 +538,8 @@ export function extractSvg(text: string): string {
       }
       return svg;
     } catch (error) {
+      // An isolated audit must never reinterpret a work-budget failure as a bad draft.
+      if (validateBeforeRender && error instanceof Error && "code" in error && ["SVG_LIMIT", "RESOURCE_LIMIT"].includes(String(error.code))) throw error;
       firstError ??= error;
     }
   }
@@ -562,8 +571,8 @@ function collectSvgCandidates(text: string): string[] {
   return candidates;
 }
 
-function validateSvgCandidate(input: string): string {
-  let svg = input.trim();
+function validateSvgCandidate(input: string, validateBeforeRender?: (svg: string) => string): string {
+  let svg = normalizeSvgForSharpText(input.trim());
   const opening = svg.match(/^<svg\b[^>]*>/i)?.[0];
   if (!opening) throw new Error("SVG 根元素无效");
   if ((svg.match(/<svg\b/gi) ?? []).length !== 1 || !/<\/svg>\s*$/i.test(svg)) {
@@ -600,7 +609,8 @@ function validateSvgCandidate(input: string): string {
   if (/<image\b[^>]*(?:href|xlink:href)\s*=\s*["']https?:/i.test(svg)) {
     throw new Error("SVG 不允许引用外部图片");
   }
-  if (/待补充|待核实|占位|示意图区域|图表区域|预览|lorem\s+ipsum/i.test(svg)) {
+  // “预览” is valid product copy (for example, 邮件预览), not a draft marker.
+  if (/待补充|待核实|占位|示意图区域|图表区域|lorem\s+ipsum/i.test(svg)) {
     throw new Error("SVG 包含未完成的占位文案");
   }
   if (/PRESENTED\s+BY|BUSINESS\s+PRESENTATION\s+PROPOSAL|STRICTLY\s+CONFIDENTIAL|STATUS:\s*PLANNING\s+DRAFT|CORE\s+PRINCIPLES|DOCUMENT\s+TYPE|DATE\s*&\s*EDITION|\b20\d{2}\s+EDITION\b/i.test(svg)) {
@@ -619,6 +629,7 @@ function validateSvgCandidate(input: string): string {
     throw new Error("SVG 没有可见文字内容");
   }
 
+  if (validateBeforeRender) svg = validateBeforeRender(svg);
   assertSvgRenders(svg, hasLikelyVisibleText(svg));
   return svg;
 }

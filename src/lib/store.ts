@@ -5,6 +5,7 @@ import type {
   PageRow,
   PageType,
   ProjectAssumptions,
+  BrandTemplate,
   ProjectRow,
   ProjectStage,
 } from "./types";
@@ -23,7 +24,7 @@ export function getProject(id: string): ProjectRow {
   return row;
 }
 
-export function createProject(requestText: string): ProjectRow {
+export function createProject(requestText: string, brandTemplate?: BrandTemplate | null): ProjectRow {
   const id = newId("p");
   const stamp = nowIso();
   const title = requestText.trim().slice(0, 32) || "未命名项目";
@@ -31,10 +32,20 @@ export function createProject(requestText: string): ProjectRow {
     .prepare(
       `INSERT INTO projects (
         id, title, request_text, stage, status, page_count_target, style_id,
+        brand_template_id, brand_template_json,
         assumptions_json, outline_json, init_sources_json, created_at, updated_at
-      ) VALUES (?, ?, ?, 'init', 'running', 12, 'brand-clean', '{}', '', '[]', ?, ?)`,
+      ) VALUES (?, ?, ?, 'init', 'running', 12, ?, ?, ?, '{}', '', '[]', ?, ?)`,
     )
-    .run(id, title, requestText.trim(), stamp, stamp);
+    .run(
+      id,
+      title,
+      requestText.trim(),
+      brandTemplate?.baseStyleId ?? "brand-clean",
+      brandTemplate?.id ?? "",
+      brandTemplate ? JSON.stringify(brandTemplate) : "",
+      stamp,
+      stamp,
+    );
   return getProject(id);
 }
 
@@ -48,6 +59,8 @@ export function updateProject(
       | "status"
       | "page_count_target"
       | "style_id"
+      | "brand_template_id"
+      | "brand_template_json"
       | "assumptions_json"
       | "outline_json"
       | "init_sources_json"
@@ -61,6 +74,7 @@ export function updateProject(
     .prepare(
       `UPDATE projects SET
         title = ?, stage = ?, status = ?, page_count_target = ?, style_id = ?,
+        brand_template_id = ?, brand_template_json = ?,
         assumptions_json = ?, outline_json = ?, init_sources_json = ?,
         error_text = ?, updated_at = ?
       WHERE id = ?`,
@@ -71,6 +85,8 @@ export function updateProject(
       next.status,
       next.page_count_target,
       next.style_id,
+      next.brand_template_id,
+      next.brand_template_json,
       next.assumptions_json,
       next.outline_json,
       next.init_sources_json,

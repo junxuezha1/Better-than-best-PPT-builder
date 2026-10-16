@@ -47,6 +47,7 @@ import type {
   ProjectDTO,
   StructureProposalDTO,
 } from "@/lib/client-types";
+import { MaterialSummary } from "./MaterialSummary";
 
 type Surface = "search" | "draft" | "design";
 type Scope = "deck" | "section" | "page";
@@ -309,6 +310,7 @@ function ScriptDesk({
       </div>
 
       <div className="custom-scroll flex-1 overflow-y-auto px-4 py-4">
+        {project.contentMaterials && <div className="mb-4"><MaterialSummary materials={project.contentMaterials} /></div>}
         {project.structureChat.length === 0 && !proposal && (
           <div className="script-empty-state">
             <MapIcon size={22} />

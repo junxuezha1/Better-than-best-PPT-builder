@@ -1,3 +1,5 @@
+import type { DesignThemeState } from "./theme-catalog";
+
 export interface StyleDTO {
   id: string;
   name: string;
@@ -76,6 +78,18 @@ export interface DeckPagePlanDTO {
   hierarchy: string[];
   readingOrder: string[];
   visualSlots: VisualSlotDTO[];
+  brandLogo?: {
+    slot:
+      | "top-left-wide"
+      | "top-right-wide"
+      | "bottom-center-wide"
+      | "top-left-square"
+      | "top-right-square"
+      | "bottom-left-square"
+      | "bottom-right-square"
+      | "left-rail-tall"
+      | "right-rail-tall";
+  };
 }
 
 export interface DeckPlanDTO {
@@ -113,7 +127,7 @@ export interface ReferenceStyleProfileDTO {
 
 export interface DesignReferenceDTO {
   status: "pending" | "processing" | "ready" | "confirmed" | "failed";
-  mode: "preset" | "upload";
+  mode: "preset" | "upload" | "brand";
   styleId: string;
   colorPreference: string;
   uploadId: string;
@@ -124,6 +138,20 @@ export interface DesignReferenceDTO {
   error: string;
   updatedAt: string;
   confirmedAt: string;
+}
+
+export interface BrandTemplateDTO {
+  id: string;
+  version: number;
+  name: string;
+  organizationName: string;
+  organizationType: "company" | "school" | "other";
+  baseStyleId: string;
+  primaryColor: string;
+  secondaryColor: string;
+  logoUrl: string;
+  logoUrls: string[];
+  assetCount: number;
 }
 
 export interface StructureProposalDTO {
@@ -159,6 +187,15 @@ export interface EventDTO {
   createdAt: string;
 }
 
+export interface ContentMaterialsDTO {
+  fileCount: number;
+  imageCount: number;
+  documentCount: number;
+  warnings: string[];
+  uploads: string[];
+  preparedSlideCount?: number;
+}
+
 export interface ProjectDTO {
   id: string;
   title: string;
@@ -179,8 +216,13 @@ export interface ProjectDTO {
   events: EventDTO[];
   deckPlan: DeckPlanDTO | null;
   designReference: DesignReferenceDTO;
+  designTheme?: DesignThemeState;
+  backgroundGeneration?: import("./background-generation").BackgroundGenerationState;
+  imageGenerationConfigured?: boolean;
+  brandTemplate: BrandTemplateDTO | null;
   structureProposal: StructureProposalDTO | null;
   structureChat: StructureChatMessageDTO[];
+  contentMaterials?: ContentMaterialsDTO | null;
 }
 
 export interface ProjectSummaryDTO {

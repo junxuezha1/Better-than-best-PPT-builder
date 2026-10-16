@@ -15,6 +15,7 @@ import { serializeProject } from "@/lib/serialize";
 import { getProject, listEvents, listPages } from "@/lib/store";
 import type { ProjectAssumptions } from "@/lib/types";
 import type { StructureChatScope } from "@/lib/types";
+import { parseThemeSelection } from "@/lib/theme-catalog";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,8 @@ export async function POST(
     mode?: "preset" | "upload";
     styleId?: string;
     colorPreference?: string;
+    theme?: unknown;
+    backgroundOnly?: boolean;
   };
 
   try {
@@ -94,6 +97,8 @@ export async function POST(
         mode: body.mode,
         styleId: body.styleId,
         colorPreference: body.colorPreference,
+        theme: body.theme === undefined ? undefined : parseThemeSelection(body.theme),
+        backgroundOnly: body.backgroundOnly === true,
       });
       responseStatus = 202;
     } else {

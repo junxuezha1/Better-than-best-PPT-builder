@@ -1,3 +1,6 @@
+import { exportFailure } from "@/lib/export-service";
+import { PptxExportError } from "@/lib/export-types";
+import { normalizeArtifactsIsolated } from "@/lib/artifact-audit";
 import { NextResponse } from "next/server";
 import { auditProjectArtifacts, enqueuePipeline, isRunning } from "@/lib/pipeline";
 import { serializeProject } from "@/lib/serialize";
@@ -11,7 +14,7 @@ export async function GET(
 ) {
   const { id } = await context.params;
   try {
-    auditProjectArtifacts(id);
+    await auditProjectArtifacts(id, normalizeArtifactsIsolated, _request.signal);
     const project = getProject(id);
     if (project.status === "running" && !isRunning(id)) {
       enqueuePipeline(id);
@@ -20,6 +23,7 @@ export async function GET(
       serializeProject(project, listPages(id), listEvents(id)),
     );
   } catch (error) {
+    if (error instanceof PptxExportError) return exportFailure(error);
     const message = error instanceof Error ? error.message : "读取失败";
     return NextResponse.json({ error: message }, { status: 404 });
   }

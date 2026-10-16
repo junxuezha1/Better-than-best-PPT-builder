@@ -1,12 +1,16 @@
 node_modules
 .next
 .playwright-cli
-output/playwright
+output/
+assets/site/
+scripts/apply-site-visual-refresh.mjs
+scripts/apply-style-consistency-refresh.mjs
 out
 data/*
 !data/.gitkeep
 .env
 .env.local
+.env.*
 .DS_Store
 *.log
 tsconfig.tsbuildinfo

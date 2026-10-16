@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AppSettings, LlmProtocol } from "@/lib/types";
+import { ImageSettingsCard, type ImageSettingsHandle } from "./ImageSettingsCard";
 
 const PROTOCOLS: { id: LlmProtocol; label: string; hint: string }[] = [
   { id: "responses", label: "OpenAI Responses", hint: "/v1/responses" },
@@ -35,6 +36,7 @@ export default function SettingsScreen() {
   const [searchModels, setSearchModels] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const imageSettingsRef = useRef<ImageSettingsHandle>(null);
 
   useEffect(() => {
     void fetch("/api/settings")
@@ -70,19 +72,20 @@ export default function SettingsScreen() {
   async function save() {
     setBusy(true);
     setMessage("");
-    const response = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
-    });
-    const data = await response.json();
-    setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "保存失败");
-      return;
-    }
-    setSettings(data.settings);
-    router.push("/");
+    try {
+      await imageSettingsRef.current?.saveIfChanged();
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存失败");
+      setSettings(data.settings);
+      router.push("/");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "保存失败，请重试");
+    } finally { setBusy(false); }
   }
 
   return (
@@ -103,7 +106,7 @@ export default function SettingsScreen() {
             <div className="mt-8 text-[10px] font-semibold tracking-[0.22em] text-[#2f80ff]">SYSTEM CONFIGURATION</div>
             <h1 className="mt-2 text-[clamp(36px,5vw,62px)] leading-none font-semibold tracking-[-0.055em]">模型控制台</h1>
             <p className="mt-4 max-w-[620px] text-[13px] leading-6 text-[#718096]">
-              文本、SVG、搜索各自独立配置。填完地址就能拉模型，Key 只存在本机。
+              文本、SVG、搜索与背景图片各自独立配置，Key 只存在本机。
             </p>
           </div>
           <button
@@ -154,6 +157,7 @@ export default function SettingsScreen() {
           />
         </div>
 
+        <div className="mt-4"><ImageSettingsCard ref={imageSettingsRef} /></div>
         {message && <p className="settings-message">{message}</p>}
       </form>
     </div>
